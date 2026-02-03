@@ -1,0 +1,12 @@
+# venv
+.venv/
+venv/
+
+# служебное
+__pycache__/
+*.pyc
+
+# конфиги среды
+.env
+.idea/
+.vscode/
