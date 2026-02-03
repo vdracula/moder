@@ -176,7 +176,7 @@ async def cmd_help(message: Message):
 # ================== ОНБОРДИНГ В ГРУППЕ ==================
 
 
-@group_router.chat_member()
+@dp.chat_member()
 async def on_user_join(event: ChatMemberUpdated):
     if event.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
         return
@@ -338,7 +338,12 @@ async def main():
     dp.include_router(group_router)
     dp.include_router(antiflood_router)
 
-    await dp.start_polling(bot)
+    # Важно: указываем типы обновлений, включая chat_member
+    await dp.start_polling(
+        bot,
+        allowed_updates=["message", "chat_member", "my_chat_member"]
+    )
+
 
 
 if __name__ == "__main__":
