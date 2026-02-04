@@ -11,16 +11,18 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message, ChatMemberUpdated, MessageEntity
 from aiogram.client.default import DefaultBotProperties
 
+
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")  # подставь токен или используй env
-ADMIN_IDS = {810620178}            # сюда свои Telegram ID
+ADMIN_IDS = {1087968824}            # сюда свои Telegram ID
 
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML),
 )
 dp = Dispatcher()
+
 
 # ================== ТЕКСТЫ ==================
 
@@ -56,27 +58,32 @@ HELP_TEXT = (
     "• приветствовать новых участников и напоминать правила\n"
     "• по команде /rules показать правила\n"
     "• по команде /welcome рассказать, что здесь происходит\n"
-    "• фильтровать спам и флуд от новичков\n\n"
-    "Админские команды (по reply): /warn, /ban"
+    "• фильтровать спам и флуд\n\n"
+    "Админские команды (по reply):\n"
+    "• /warn — предупреждение\n"
+    "• /ban — забанить\n"
+    "• /unban — разбанить (по reply или /unban ID)"
 )
+
 
 # ================== РОУТЕРЫ ==================
 
 base_router = Router()
 group_router = Router()
-group_router.message.filter(F.chat.type.in_({"group", "supergroup"}))
+group_router.message.filter(F.chat.type.in_({"group", "supergroup", "channel"}))
+
 
 antiflood_router = Router()
-antiflood_router.message.filter(F.chat.type.in_({"group", "supergroup"}))
+antiflood_router.message.filter(F.chat.type.in_({"group", "supergroup", "channel"}))
+
 
 # ================== УТИЛИТЫ ==================
-
 
 def is_admin(message: Message) -> bool:
     return message.from_user and message.from_user.id in ADMIN_IDS
 
 
-# --- антиспам: ключевые слова и ссылки ---
+# --- антиспам ---
 
 BAD_KEYWORDS = {
     "заработок в день", "быстрый заработок", "ставки на спорт",
@@ -90,7 +97,6 @@ BAD_DOMAINS = {
 
 URL_PATTERN = re.compile(r"(https?://\S+|t\.me/\S+)", re.IGNORECASE)
 
-
 def contains_bad_link(text: str) -> bool:
     text_lower = text.lower()
     for d in BAD_DOMAINS:
@@ -101,11 +107,9 @@ def contains_bad_link(text: str) -> bool:
         return True
     return False
 
-
 def contains_bad_keywords(text: str) -> bool:
     text_lower = text.lower()
     return any(w in text_lower for w in BAD_KEYWORDS)
-
 
 def looks_like_code(text: str) -> bool:
     if "```" in text:
@@ -116,10 +120,7 @@ def looks_like_code(text: str) -> bool:
         stripped = line.strip()
         if not stripped:
             continue
-        if any(
-            kw in stripped
-            for kw in ("def ", "class ", "for ", "while ", "if ", "else:", "try:", "except")
-        ):
+        if any(kw in stripped for kw in ("def ", "class ", "for ", "while ", "if ", "else:", "try:", "except")):
             code_like_lines += 1
             continue
         if any(ch in stripped for ch in ("{", "}", ";", "=>", "==", "::")):
@@ -127,14 +128,18 @@ def looks_like_code(text: str) -> bool:
     return code_like_lines >= 2
 
 
-# --- онбординг / отслеживание входа ---
+# --- онбординг ---
 
-joined_at = {}  # user_id -> timestamp
-NEWBIE_SECONDS = 60        # 1 минута
-FLOOD_WINDOW = 20          # окно 20 секунд
-FLOOD_MAX_MESSAGES = 3     # максимум 3 сообщения в окне
-user_messages_ts = defaultdict(list)  # user_id -> [timestamps]
+joined_at = {}
+NEWBIE_SECONDS = 60
 
+NEWBIE_FLOOD_WINDOW = 20
+NEWBIE_FLOOD_MAX_MESSAGES = 3
+
+FLOOD_WINDOW = 30
+FLOOD_MAX_MESSAGES = 10
+
+user_messages_ts = defaultdict(list)
 
 def is_newbie_id(user_id: int) -> bool:
     ts = joined_at.get(user_id)
@@ -143,8 +148,7 @@ def is_newbie_id(user_id: int) -> bool:
     return time.time() - ts < NEWBIE_SECONDS
 
 
-# ================== ХЕНДЛЕРЫ: БАЗОВЫЕ КОМАНДЫ ==================
-
+# ================== БАЗОВЫЕ КОМАНДЫ ==================
 
 @base_router.message(Command("start"))
 async def cmd_start(message: Message):
@@ -157,28 +161,27 @@ async def cmd_start(message: Message):
         "• /help — что я умею"
     )
 
-
 @base_router.message(Command("rules"))
 async def cmd_rules(message: Message):
     await message.answer(RULES_TEXT)
 
-
 @base_router.message(Command("welcome"))
 async def cmd_welcome(message: Message):
     await message.answer(WELCOME_TEXT)
-
 
 @base_router.message(Command("help"))
 async def cmd_help(message: Message):
     await message.answer(HELP_TEXT)
 
 
-# ================== ОНБОРДИНГ В ГРУППЕ ==================
 
+# ================== ОНБОРДИНГ ==================
 
 @dp.chat_member()
 async def on_user_join(event: ChatMemberUpdated):
-    if event.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+    logging.info(f"chat_member: type={event.chat.type}, old={event.old_chat_member.status}, new={event.new_chat_member.status}")
+    
+    if event.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL):
         return
 
     old = event.old_chat_member
@@ -189,54 +192,55 @@ async def on_user_join(event: ChatMemberUpdated):
         joined_at[user.id] = time.time()
         mention = user.mention_html()
         text = (
-            f"👋 {mention}, добро пожаловать в чат <b>«Нейрокодер из Москвы»</b>!\n\n"
+            f"👋 {mention}, добро пожаловать в группу <b>«Нейрокодер из Москвы»</b>!\n\n"
             "Пожалуйста, ознакомься с правилами: /rules\n"
-            "И короткий онбординг: /welcome\n\n"
-            "Будет круто, если коротко напишешь, чем занимаешься и что хочешь собрать с нейросетями 🙂"
+            "И короткий онбординг: /welcome"
         )
         await event.bot.send_message(chat_id=event.chat.id, text=text)
 
 
-# ================== АНТИФЛУД ДЛЯ НОВИЧКОВ ==================
+# ================== АНТИФЛУД ==================
 
-
-@antiflood_router.message(F.text)
-async def newbie_antiflood(message: Message):
+@antiflood_router.message()
+async def universal_antiflood(message: Message):
     user = message.from_user
-    if not user:
-        return
-
-    if user.id in ADMIN_IDS:
-        return
-
-    if not is_newbie_id(user.id):
+    if not user or user.id in ADMIN_IDS:
         return
 
     now = time.time()
     ts_list = user_messages_ts[user.id]
     ts_list.append(now)
-    ts_list[:] = [t for t in ts_list if now - t <= FLOOD_WINDOW]
 
-    if len(ts_list) > FLOOD_MAX_MESSAGES:
+    if is_newbie_id(user.id):
+        window = NEWBIE_FLOOD_WINDOW
+        max_messages = NEWBIE_FLOOD_MAX_MESSAGES
+        warning_text = (
+            f"🧊 {user.mention_html()}, без флуда.\n"
+            "Ты только что зашёл в «Нейрокодер из Москвы» — сначала /rules и /welcome, "
+            "потом один нормальный вопрос вместо простыни сообщений 🙂"
+        )
+    else:
+        window = FLOOD_WINDOW
+        max_messages = FLOOD_MAX_MESSAGES
+        warning_text = (
+            f"🧊 {user.mention_html()}, слишком быстро.\n"
+            "Давай чуть помедленнее — дай другим участникам тоже высказаться 🙂"
+        )
+
+    ts_list[:] = [t for t in ts_list if now - t <= window]
+
+    if len(ts_list) > max_messages:
         try:
             await message.delete()
-        except Exception:
-            pass
-        try:
-            await message.chat.send_message(
-                f"🧊 @{user.username or user.id}, без флуда.\n"
-                "Ты только что зашёл в «Нейрокодер из Москвы» — сначала /rules и /welcome, "
-                "потом один нормальный вопрос вместо простыни сообщений 🙂"
-            )
-        except Exception:
-            pass
+            await bot.send_message(chat_id=message.chat.id, text=warning_text)
+        except Exception as e:
+            logging.error(f"Antiflood error: {e}")
 
 
-# ================== ОГРАНИЧЕНИЕ МЕДИА/ССЫЛОК ДЛЯ НОВИЧКОВ ==================
-
+# ================== ОГРАНИЧЕНИЯ ДЛЯ НОВИЧКОВ ==================
 
 @antiflood_router.message()
-async def newbie_restrict_media_and_links(message: Message):
+async def newbie_restrictions(message: Message):
     user = message.from_user
     if not user or not is_newbie_id(user.id):
         return
@@ -244,32 +248,28 @@ async def newbie_restrict_media_and_links(message: Message):
     if message.photo or message.video or message.document or message.animation:
         try:
             await message.delete()
-            await message.chat.send_message(
-                "📎 Медиа от новых участников временно запрещены.\n"
-                "Сначала познакомься с чатом, а потом уже кидай скрины и файлы 🙂"
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="📎 Медиа от новых участников временно запрещены.\nСначала познакомься с чатом 🙂"
             )
         except Exception:
             pass
         return
 
     if message.entities:
-        has_link = any(
-            e.type in {MessageEntity.Type.URL, MessageEntity.Type.TEXT_LINK}
-            for e in message.entities
-        )
+        has_link = any(e.type in {MessageEntity.Type.URL, MessageEntity.Type.TEXT_LINK} for e in message.entities)
         if has_link:
             try:
                 await message.delete()
-                await message.chat.send_message(
-                    "🔗 Ссылки от новых участников временно выключены.\n"
-                    "Если это важная ссылка по теме — напиши админам."
+                await bot.send_message(
+                    chat_id=message.chat.id,
+                    text="🔗 Ссылки от новых участников временно выключены.\nНапиши админам, если важно."
                 )
             except Exception:
                 pass
 
 
-# ================== УМНЫЙ АНТИСПАМ (НЕ ТРОГАЕМ КОД) ==================
-
+# ================== АНТИСПАМ ==================
 
 @group_router.message(F.text)
 async def smart_spam_filter(message: Message):
@@ -277,16 +277,15 @@ async def smart_spam_filter(message: Message):
         return
 
     text = message.text or ""
-
     if looks_like_code(text):
         return
 
     if contains_bad_link(text) or contains_bad_keywords(text):
         try:
             await message.delete()
-            await message.answer(
-                "🚫 Сообщение удалено ботом‑модератором.\n"
-                "Причина: похоже на спам/рекламу, не связанную с нейрокодингом."
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="🚫 Сообщение удалено ботом‑модератором.\nПричина: похоже на спам/рекламу."
             )
         except Exception:
             pass
@@ -294,9 +293,14 @@ async def smart_spam_filter(message: Message):
 
 # ================== АДМИН-КОМАНДЫ ==================
 
-
-@group_router.message(Command("warn"))
+@base_router.message(Command("warn"))  # ИЗМЕНЕНО: было group_router
 async def cmd_warn(message: Message):
+    logging.info(f"/warn triggered by {message.from_user.id}")
+    
+    # Проверка, что это группа
+    if message.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL):
+        return
+    
     if not is_admin(message):
         return
 
@@ -305,15 +309,18 @@ async def cmd_warn(message: Message):
         return
 
     violator = message.reply_to_message.from_user
-    mention = violator.mention_html()
     await message.reply(
-        f"⚠ {mention}, предупреждение за нарушение правил чата.\n"
+        f"⚠ {violator.mention_html()}, предупреждение за нарушение правил чата.\n"
         "Повторные нарушения могут привести к ограничениям или бану."
     )
 
-
-@group_router.message(Command("ban"))
-async def cmd_ban(message: Message, command: CommandObject):
+@base_router.message(Command("ban"))  # ИЗМЕНЕНО
+async def cmd_ban(message: Message):
+    logging.info(f"/ban triggered by {message.from_user.id}")
+    
+    if message.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL):
+        return
+    
     if not is_admin(message):
         return
 
@@ -327,23 +334,50 @@ async def cmd_ban(message: Message, command: CommandObject):
         await message.reply(f"🔨 Пользователь {violator.mention_html()} забанен.")
     except Exception as e:
         logging.exception(e)
-        await message.reply("Не получилось забанить пользователя. Проверь мои права администратора.")
+        await message.reply("Не получилось забанить. Проверь права бота.")
+
+@base_router.message(Command("unban"))  # ИЗМЕНЕНО
+async def cmd_unban(message: Message, command: CommandObject):
+    logging.info(f"/unban triggered by {message.from_user.id}")
+    
+    if message.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL):
+        return
+    
+    if not is_admin(message):
+        return
+
+    if message.reply_to_message:
+        user_id = message.reply_to_message.from_user.id
+    elif command.args:
+        try:
+            user_id = int(command.args)
+        except ValueError:
+            await message.reply("Неверный формат. Используй: /unban 123456789 или ответь на сообщение.")
+            return
+    else:
+        await message.reply("Используй /unban в ответ на сообщение или укажи ID: /unban 123456789")
+        return
+
+    try:
+        await bot.unban_chat_member(chat_id=message.chat.id, user_id=user_id, only_if_banned=True)
+        await message.reply(f"✅ Пользователь {user_id} разбанен.")
+    except Exception as e:
+        logging.exception(e)
+        await message.reply("Не получилось разбанить. Возможно, пользователь не был забанен.")
+
 
 
 # ================== ЗАПУСК ==================
 
-
 async def main():
     dp.include_router(base_router)
-    dp.include_router(group_router)
     dp.include_router(antiflood_router)
+    dp.include_router(group_router)
 
-    # Важно: указываем типы обновлений, включая chat_member
     await dp.start_polling(
         bot,
         allowed_updates=["message", "chat_member", "my_chat_member"]
     )
-
 
 
 if __name__ == "__main__":
